@@ -1,4 +1,5 @@
 import { PackageFileInfo } from '@pnpm/store-controller-types'
+import base32Encode = require('base32-encode')
 import getStream = require('get-stream')
 import path = require('path')
 import exists = require('path-exists')
@@ -56,7 +57,7 @@ async function addBufferToCafs (
 ): Promise<ssri.Integrity> {
   const integrity = ssri.fromData(buffer)
   const isExecutable = modeIsExecutable(mode)
-  const fileDest = contentPathFromHex(isExecutable ? 'exec' : 'nonexec', integrity.hexDigest())
+  const fileDest = contentPathFromHex(isExecutable ? 'exec' : 'nonexec', base32Encode(Buffer.from(integrity.sha512[0].digest, 'base64'), 'Crockford', { padding: false }))
   await writeBufferToCafs(buffer, fileDest, isExecutable ? 0o755 : undefined)
   return integrity
 }
