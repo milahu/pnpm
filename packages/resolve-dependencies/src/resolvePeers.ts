@@ -18,6 +18,7 @@ import {
   createNodeId,
   splitNodeId,
 } from './nodeIdUtils'
+import resolveDependencies from './resolveDependencies'
 
 export interface GenericDependenciesGraphNode {
   // at this point the version is really needed only for logging
@@ -58,6 +59,7 @@ export default function<T extends PartialResolvedPackage> (
     virtualStoreDir: string
     lockfileDir: string
     strictPeerDependencies: boolean
+    installPeerDependencies: boolean
   }
 ): {
     dependenciesGraph: GenericDependenciesGraph<T>
@@ -84,6 +86,7 @@ export default function<T extends PartialResolvedPackage> (
       purePkgs: new Set(),
       rootDir,
       strictPeerDependencies: opts.strictPeerDependencies,
+      installPeerDependencies: opts.installPeerDependencies,
       virtualStoreDir: opts.virtualStoreDir,
     })
   }
@@ -137,16 +140,20 @@ function createPkgsByName<T extends PartialResolvedPackage> (
   )
 }
 
+type InstallPeer = { name: string, versionRange: string }
+
 interface PeersCacheItem {
   depPath: string
   resolvedPeers: Array<[string, string]>
   missingPeers: string[]
+  installPeers: InstallPeer[]
 }
 
 type PeersCache = Map<string, PeersCacheItem[]>
 
 interface PeersResolution {
   missingPeers: string[]
+  installPeers: InstallPeer[]
   resolvedPeers: Record<string, string>
 }
 
@@ -163,10 +170,11 @@ function resolvePeersOfNode<T extends PartialResolvedPackage> (
     rootDir: string
     lockfileDir: string
     strictPeerDependencies: boolean
+    installPeerDependencies: boolean
   }
 ): PeersResolution {
   const node = ctx.dependenciesTree[nodeId]
-  if (node.depth === -1) return { resolvedPeers: {}, missingPeers: [] }
+  if (node.depth === -1) return { resolvedPeers: {}, missingPeers: [], installPeers: [] }
   const resolvedPackage = node.resolvedPackage as T
   if (
     ctx.purePkgs.has(resolvedPackage.depPath) &&
@@ -174,7 +182,7 @@ function resolvePeersOfNode<T extends PartialResolvedPackage> (
     isEmpty(resolvedPackage.peerDependencies)
   ) {
     ctx.pathsByNodeId[nodeId] = resolvedPackage.depPath
-    return { resolvedPeers: {}, missingPeers: [] }
+    return { resolvedPeers: {}, missingPeers: [], installPeers: [] }
   }
   if (typeof node.children === 'function') {
     node.children = node.children()
@@ -207,6 +215,7 @@ function resolvePeersOfNode<T extends PartialResolvedPackage> (
         const cachedDepPath = (ctx.dependenciesTree[cachedNodeId].resolvedPackage as T).depPath
         return parentDepPath === cachedDepPath
       }) && cache.missingPeers.every((missingPeer) => !parentPkgs[missingPeer])
+      // TODO installPeers?
   )
   if (hit != null) {
     ctx.pathsByNodeId[nodeId] = hit.depPath
@@ -214,16 +223,18 @@ function resolvePeersOfNode<T extends PartialResolvedPackage> (
     return {
       missingPeers: hit.missingPeers,
       resolvedPeers: fromPairs(hit.resolvedPeers),
+      installPeers: [], // TODO?
     }
   }
 
   const {
     resolvedPeers: unknownResolvedPeersOfChildren,
     missingPeers: missingPeersOfChildren,
+    installPeers: installPeersOfChildren,
   } = resolvePeersOfChildren(children, parentPkgs, ctx)
 
-  const { resolvedPeers, missingPeers } = isEmpty(resolvedPackage.peerDependencies)
-    ? { resolvedPeers: {}, missingPeers: [] }
+  const { resolvedPeers, missingPeers, installPeers } = isEmpty(resolvedPackage.peerDependencies)
+    ? { resolvedPeers: {}, missingPeers: [], installPeers: [] }
     : resolvePeers({
       currentDepth: node.depth,
       dependenciesTree: ctx.dependenciesTree,
@@ -233,11 +244,13 @@ function resolvePeersOfNode<T extends PartialResolvedPackage> (
       resolvedPackage,
       rootDir: ctx.rootDir,
       strictPeerDependencies: ctx.strictPeerDependencies,
+      installPeerDependencies: ctx.installPeerDependencies,
     })
 
   const allResolvedPeers = Object.assign(unknownResolvedPeersOfChildren, resolvedPeers)
   delete allResolvedPeers[node.resolvedPackage.name]
   const allMissingPeers = Array.from(new Set([...missingPeersOfChildren, ...missingPeers]))
+  const allInstallPeers = Array.from(new Set([...installPeersOfChildren, ...installPeers]))
 
   let depPath: string
   if (isEmpty(allResolvedPeers)) {
@@ -257,6 +270,7 @@ function resolvePeersOfNode<T extends PartialResolvedPackage> (
   } else {
     const cache = {
       missingPeers: allMissingPeers,
+      installPeers: allInstallPeers,
       depPath,
       resolvedPeers: Object.entries(allResolvedPeers),
     }
@@ -301,7 +315,7 @@ function resolvePeersOfNode<T extends PartialResolvedPackage> (
       transitivePeerDependencies,
     }
   }
-  return { resolvedPeers: allResolvedPeers, missingPeers: allMissingPeers }
+  return { resolvedPeers: allResolvedPeers, missingPeers: allMissingPeers, installPeers: allInstallPeers }
 }
 
 // When a package has itself in the subdependencies, so there's a cycle,
@@ -346,15 +360,18 @@ function resolvePeersOfChildren<T extends PartialResolvedPackage> (
     rootDir: string
     lockfileDir: string
     strictPeerDependencies: boolean
+    installPeerDependencies: boolean
   }
 ): PeersResolution {
   const allResolvedPeers: Record<string, string> = {}
   const allMissingPeers = new Set<string>()
+  const allInstallPeers = new Set<InstallPeer>()
 
   for (const childNodeId of Object.values(children)) {
-    const { resolvedPeers, missingPeers } = resolvePeersOfNode(childNodeId, parentPkgs, ctx)
+    const { resolvedPeers, missingPeers, installPeers } = resolvePeersOfNode(childNodeId, parentPkgs, ctx)
     Object.assign(allResolvedPeers, resolvedPeers)
     missingPeers.forEach((missingPeer) => allMissingPeers.add(missingPeer))
+    installPeers.forEach((installPeer) => allInstallPeers.add(installPeer))
   }
 
   const unknownResolvedPeersOfChildren = Object.keys(allResolvedPeers)
@@ -364,7 +381,7 @@ function resolvePeersOfChildren<T extends PartialResolvedPackage> (
       return acc
     }, {})
 
-  return { resolvedPeers: unknownResolvedPeersOfChildren, missingPeers: Array.from(allMissingPeers) }
+  return { resolvedPeers: unknownResolvedPeersOfChildren, missingPeers: Array.from(allMissingPeers), installPeers: Array.from(allInstallPeers) }
 }
 
 function resolvePeers<T extends PartialResolvedPackage> (
@@ -377,16 +394,25 @@ function resolvePeers<T extends PartialResolvedPackage> (
     dependenciesTree: DependenciesTree<T>
     rootDir: string
     strictPeerDependencies: boolean
+    installPeerDependencies: boolean
   }
 ): PeersResolution {
   const resolvedPeers: {[alias: string]: string} = {}
   const missingPeers = []
+  const installPeers = {}
   for (const peerName in ctx.resolvedPackage.peerDependencies) { // eslint-disable-line:forin
     const peerVersionRange = ctx.resolvedPackage.peerDependencies[peerName]
 
     const resolved = ctx.parentPkgs[peerName]
 
     if (!resolved) {
+      if (ctx.installPeerDependencies) {
+        installPeers[k] = {};
+        const foo = await resolveDependencies(ctx, getVersionSpecsByRealNames(installPeers), installPeers)
+        // TODO resolve version -> use resolveDependencies.ts? via resolveDependencyTree.ts -> resolvedPackage
+        installPeers.push({ name: peerName, versionRange: peerVersionRange })
+        continue
+      }
       missingPeers.push(peerName)
       if (
         ctx.resolvedPackage.peerDependenciesMeta?.[peerName]?.optional === true
@@ -407,6 +433,11 @@ requires a peer of ${peerName}@${peerVersionRange} but none was installed.`
     }
 
     if (!semver.satisfies(resolved.version, peerVersionRange, { loose: true })) {
+      if (ctx.installPeerDependencies) {
+        // TODO resolve version -> use resolveDependencies.ts? via resolveDependencyTree.ts -> resolvedPackage
+        installPeers.push({ name: peerName, versionRange: peerVersionRange })
+        continue
+      }
       const friendlyPath = nodeIdToFriendlyPath(ctx)
       const message = `${friendlyPath ? `${friendlyPath}: ` : ''}${packageFriendlyId(ctx.resolvedPackage)} \
 requires a peer of ${peerName}@${peerVersionRange} but version ${resolved.version} was installed.`
@@ -421,7 +452,7 @@ requires a peer of ${peerName}@${peerVersionRange} but version ${resolved.versio
 
     if (resolved?.nodeId) resolvedPeers[peerName] = resolved.nodeId
   }
-  return { resolvedPeers, missingPeers }
+  return { resolvedPeers, missingPeers, installPeers }
 }
 
 function packageFriendlyId (manifest: {name: string, version: string}) {

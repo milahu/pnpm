@@ -150,6 +150,7 @@ export default async function (
     lockfileDir: opts.lockfileDir,
     projects: projectsToLink,
     strictPeerDependencies: opts.strictPeerDependencies,
+    installPeerDependencies: opts.installPeerDependencies,
     virtualStoreDir: opts.virtualStoreDir,
   })
 

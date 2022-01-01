@@ -118,6 +118,7 @@ export interface Config {
   reverse: boolean
   sort: boolean
   strictPeerDependencies: boolean
+  installPeerDependencies: boolean
   lockfileDir?: string
   modulesDir?: string
   sharedWorkspaceLockfile?: boolean

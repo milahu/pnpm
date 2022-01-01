@@ -804,6 +804,7 @@ const _installInContext: InstallFunction = async (projects, ctx, opts) => {
       saveWorkspaceProtocol: opts.saveWorkspaceProtocol,
       storeController: opts.storeController,
       strictPeerDependencies: opts.strictPeerDependencies,
+      installPeerDependencies: opts.installPeerDependencies,
       tag: opts.tag,
       updateMatching: opts.updateMatching,
       virtualStoreDir: ctx.virtualStoreDir,

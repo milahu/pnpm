@@ -57,6 +57,7 @@ export interface StrictInstallOptions {
   sideEffectsCacheRead: boolean
   sideEffectsCacheWrite: boolean
   strictPeerDependencies: boolean
+  installPeerDependencies: boolean
   include: IncludedDependencies
   includeDirect: IncludedDependencies
   ignoreCurrentPrefs: boolean
@@ -139,6 +140,7 @@ const defaults = async (opts: InstallOptions) => {
     storeController: opts.storeController,
     storeDir: opts.storeDir,
     strictPeerDependencies: false,
+    installPeerDependencies: false, // compatibility with NPMv7
     tag: 'latest',
     unsafePerm: process.platform === 'win32' ||
       process.platform === 'cygwin' ||
